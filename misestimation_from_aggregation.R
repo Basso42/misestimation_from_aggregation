@@ -19,10 +19,10 @@
 path <- "C:/Users/CD/Documents/GitHub/misestimation_from_aggregation/" # put your own path here 
 
 # install packages from source
-install.packages(paste0(path, "GLcascade_0.9.3.0.zip"), 
+install.packages(paste0(path, "GLcascade_0.9.3.1.zip"), 
                  repos = NULL, type = "win.binary")
 
-install.packages(paste0(path, "fastcascade_0.9.3.0.zip"), 
+install.packages(paste0(path, "fastcascade_0.9.3.1.zip"), 
                  repos = NULL, type = "win.binary")
 
 # load the packages
