@@ -4,7 +4,14 @@ Network aggregation functions for converting firm-level networks to sector-level
 
 import numpy as np
 from typing import Dict, Tuple, Optional, Union, List
-from .utils import validate_network, validate_sectors, get_sector_mapping
+from .utils import validate_network, validate_sectors, get_sector_mapping, check_sparsity, fast_matrix_multiply
+from .performance import optimized_indicator_matrix, cached_unique_sectors
+
+try:
+    from scipy import sparse
+    HAS_SCIPY_SPARSE = True
+except ImportError:
+    HAS_SCIPY_SPARSE = False
 
 
 class NetworkAggregator:
@@ -44,17 +51,15 @@ class NetworkAggregator:
         sectors = validate_sectors(sectors, network.shape[0])
         
         if unique_sectors is None:
-            unique_sectors = np.unique(sectors)
+            unique_sectors = cached_unique_sectors(tuple(sectors))
         else:
             unique_sectors = np.asarray(unique_sectors)
         
         n_firms = network.shape[0]
         n_sectors = len(unique_sectors)
         
-        # Create indicator matrix: psup[i, k] = 1 if firm i is in sector k
-        psup = np.zeros((n_firms, n_sectors))
-        for i, sector in enumerate(unique_sectors):
-            psup[:, i] = (sectors == sector).astype(int)
+        # Use optimized indicator matrix creation
+        psup = optimized_indicator_matrix(sectors, unique_sectors)
         
         # Aggregate: suppliers become sectors
         # counts: binary network (connections)
@@ -62,8 +67,8 @@ class NetworkAggregator:
         binary_network = (network > 0).astype(int)
         
         return {
-            'counts': psup.T @ binary_network,  # (n_sectors, n_firms)
-            'volume': psup.T @ network          # (n_sectors, n_firms)
+            'counts': fast_matrix_multiply(psup.T, binary_network),  # (n_sectors, n_firms)
+            'volume': fast_matrix_multiply(psup.T, network)          # (n_sectors, n_firms)
         }
     
     def aggregate_buyers(self, network: np.ndarray, sectors: Union[List, np.ndarray],
@@ -92,24 +97,22 @@ class NetworkAggregator:
         sectors = validate_sectors(sectors, network.shape[0])
         
         if unique_sectors is None:
-            unique_sectors = np.unique(sectors)
+            unique_sectors = cached_unique_sectors(tuple(sectors))
         else:
             unique_sectors = np.asarray(unique_sectors)
         
         n_firms = network.shape[0]
         n_sectors = len(unique_sectors)
         
-        # Create indicator matrix: psup[i, k] = 1 if firm i is in sector k
-        psup = np.zeros((n_firms, n_sectors))
-        for i, sector in enumerate(unique_sectors):
-            psup[:, i] = (sectors == sector).astype(int)
+        # Use optimized indicator matrix creation
+        psup = optimized_indicator_matrix(sectors, unique_sectors)
         
         # Aggregate: buyers become sectors
         binary_network = (network > 0).astype(int)
         
         return {
-            'counts': (binary_network @ psup).T,  # (n_sectors, n_firms)
-            'volume': (network @ psup).T          # (n_sectors, n_firms)
+            'counts': fast_matrix_multiply(binary_network, psup).T,  # (n_sectors, n_firms)
+            'volume': fast_matrix_multiply(network, psup).T          # (n_sectors, n_firms)
         }
     
     def aggregate_to_sectors(self, network: np.ndarray, 
@@ -136,13 +139,27 @@ class NetworkAggregator:
         n_sectors = len(sector_to_index)
         n_firms = network.shape[0]
         
-        # Create sector aggregation matrix
-        psup = np.zeros((n_firms, n_sectors))
-        for i in range(n_firms):
-            psup[i, consecutive_sectors[i]] = 1
+        # Use optimized indicator matrix creation
+        # Convert consecutive_sectors to match the expected format
+        unique_sectors = np.arange(n_sectors)
+        psup = optimized_indicator_matrix(consecutive_sectors, unique_sectors)
         
-        # Aggregate: Z = P^T * W * P
-        sector_network = psup.T @ network @ psup
+        # Use sparse matrices for large networks if available
+        if HAS_SCIPY_SPARSE and check_sparsity(network):
+            psup_sparse = sparse.csr_matrix(psup)
+            network_sparse = sparse.csr_matrix(network)
+            
+            # Aggregate: Z = P^T * W * P
+            temp = fast_matrix_multiply(psup_sparse.T, network_sparse)
+            sector_network = fast_matrix_multiply(temp, psup_sparse)
+            
+            # Ensure we return a numpy array
+            if hasattr(sector_network, 'toarray'):
+                sector_network = sector_network.toarray()
+        else:
+            # Aggregate: Z = P^T * W * P
+            temp = fast_matrix_multiply(psup.T, network)
+            sector_network = fast_matrix_multiply(temp, psup)
         
         return sector_network
     

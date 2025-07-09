@@ -7,6 +7,13 @@ from typing import Union, List, Dict, Optional
 from multiprocessing import Pool
 import warnings
 from .utils import safe_divide
+from .performance import batch_minimum_maximum, estimate_memory_usage, optimize_matrix_operations
+
+try:
+    from scipy import sparse
+    HAS_SCIPY_SPARSE = True
+except ImportError:
+    HAS_SCIPY_SPARSE = False
 
 
 class SimilarityCalculator:
@@ -81,14 +88,66 @@ class SimilarityCalculator:
         
         return jaccard_matrix
     
-    def pairwise_weighted_jaccard(self, matrix: np.ndarray) -> np.ndarray:
+    @optimize_matrix_operations
+    def pairwise_weighted_jaccard(self, matrix: np.ndarray, use_sparse: bool = False) -> np.ndarray:
         """
-        Calculate pairwise weighted Jaccard indices.
+        Calculate pairwise weighted Jaccard indices using optimized vectorized operations.
         
         Parameters
         ----------
         matrix : np.ndarray
             Input matrix where each column is a firm
+        use_sparse : bool, default False
+            Whether to use sparse matrix operations
+            
+        Returns
+        -------
+        np.ndarray
+            Pairwise weighted Jaccard similarity matrix
+        """
+        n_firms = matrix.shape[1]
+        
+        # Check memory requirements for large matrices
+        memory_required = estimate_memory_usage((matrix.shape[0], n_firms, n_firms))
+        
+        if memory_required > 1000:  # > 1GB
+            warnings.warn(f"Large memory requirement ({memory_required:.1f} MB). Consider using smaller batch sizes.")
+        
+        # For very large matrices, process in blocks
+        if n_firms > 1000 and memory_required > 500:
+            return self._pairwise_weighted_jaccard_blocked(matrix, block_size=500)
+        
+        # Vectorized computation using broadcasting
+        # Expand matrix to enable broadcasting: (n_sectors, n_firms, 1) and (n_sectors, 1, n_firms)
+        matrix_i = matrix[:, :, np.newaxis]  # Shape: (n_sectors, n_firms, 1)
+        matrix_j = matrix[:, np.newaxis, :]  # Shape: (n_sectors, 1, n_firms)
+        
+        # Use batch processing for memory efficiency if needed
+        if memory_required > 100:  # > 100MB
+            minimums, maximums = batch_minimum_maximum(matrix_i, matrix_j, batch_size=200)
+        else:
+            minimums = np.minimum(matrix_i, matrix_j)
+            maximums = np.maximum(matrix_i, matrix_j)
+        
+        # Compute intersections and unions for all pairs simultaneously
+        intersections = np.sum(minimums, axis=0)  # Shape: (n_firms, n_firms)
+        unions = np.sum(maximums, axis=0)         # Shape: (n_firms, n_firms)
+        
+        # Calculate Jaccard indices with safe division
+        result = safe_divide(intersections, unions, fill_value=0.0)
+        
+        return result
+    
+    def _pairwise_weighted_jaccard_blocked(self, matrix: np.ndarray, block_size: int = 500) -> np.ndarray:
+        """
+        Calculate pairwise weighted Jaccard indices using block processing for large matrices.
+        
+        Parameters
+        ----------
+        matrix : np.ndarray
+            Input matrix where each column is a firm
+        block_size : int
+            Size of blocks for processing
             
         Returns
         -------
@@ -98,17 +157,23 @@ class SimilarityCalculator:
         n_firms = matrix.shape[1]
         result = np.zeros((n_firms, n_firms))
         
-        for i in range(n_firms):
-            for j in range(n_firms):
-                vec_i = matrix[:, i]
-                vec_j = matrix[:, j]
+        for i in range(0, n_firms, block_size):
+            end_i = min(i + block_size, n_firms)
+            for j in range(0, n_firms, block_size):
+                end_j = min(j + block_size, n_firms)
                 
-                # Intersection: element-wise minimum
-                intersection = np.sum(np.minimum(vec_i, vec_j))
-                # Union: element-wise maximum  
-                union = np.sum(np.maximum(vec_i, vec_j))
+                # Process block
+                block_i = matrix[:, i:end_i]
+                block_j = matrix[:, j:end_j]
                 
-                result[i, j] = safe_divide(intersection, union, fill_value=0.0)
+                # Vectorized computation for this block
+                matrix_i = block_i[:, :, np.newaxis]
+                matrix_j = block_j[:, np.newaxis, :]
+                
+                intersections = np.sum(np.minimum(matrix_i, matrix_j), axis=0)
+                unions = np.sum(np.maximum(matrix_i, matrix_j), axis=0)
+                
+                result[i:end_i, j:end_j] = safe_divide(intersections, unions, fill_value=0.0)
         
         return result
     
@@ -134,14 +199,17 @@ class SimilarityCalculator:
         
         return self.pairwise_weighted_jaccard(normalized_matrix)
     
-    def pairwise_overlap_relative(self, matrix: np.ndarray) -> np.ndarray:
+    @optimize_matrix_operations
+    def pairwise_overlap_relative(self, matrix: np.ndarray, use_sparse: bool = False) -> np.ndarray:
         """
-        Calculate pairwise relative overlap coefficients.
+        Calculate pairwise relative overlap coefficients using optimized vectorized operations.
         
         Parameters
         ----------
         matrix : np.ndarray
             Input matrix where each column is a firm
+        use_sparse : bool, default False
+            Whether to use sparse matrix operations
             
         Returns
         -------
@@ -153,13 +221,63 @@ class SimilarityCalculator:
         normalized_matrix = safe_divide(matrix, column_sums[np.newaxis, :], fill_value=0.0)
         
         n_firms = matrix.shape[1]
+        
+        # Check memory requirements
+        memory_required = estimate_memory_usage((matrix.shape[0], n_firms, n_firms))
+        
+        if memory_required > 500:  # > 500MB, use blocked processing
+            return self._pairwise_overlap_blocked(normalized_matrix, block_size=400)
+        
+        # Vectorized computation using broadcasting
+        # Expand matrix to enable broadcasting: (n_sectors, n_firms, 1) and (n_sectors, 1, n_firms)
+        matrix_i = normalized_matrix[:, :, np.newaxis]  # Shape: (n_sectors, n_firms, 1)
+        matrix_j = normalized_matrix[:, np.newaxis, :]  # Shape: (n_sectors, 1, n_firms)
+        
+        # Use batch processing for memory efficiency if needed
+        if memory_required > 100:  # > 100MB
+            minimums, _ = batch_minimum_maximum(matrix_i, matrix_j, batch_size=200)
+        else:
+            minimums = np.minimum(matrix_i, matrix_j)
+        
+        # Compute overlaps for all pairs simultaneously
+        overlaps = np.sum(minimums, axis=0)  # Shape: (n_firms, n_firms)
+        
+        return overlaps
+    
+    def _pairwise_overlap_blocked(self, normalized_matrix: np.ndarray, block_size: int = 400) -> np.ndarray:
+        """
+        Calculate pairwise overlap using block processing for large matrices.
+        
+        Parameters
+        ----------
+        normalized_matrix : np.ndarray
+            Normalized input matrix where each column is a firm
+        block_size : int
+            Size of blocks for processing
+            
+        Returns
+        -------
+        np.ndarray
+            Pairwise overlap matrix
+        """
+        n_firms = normalized_matrix.shape[1]
         result = np.zeros((n_firms, n_firms))
         
-        for j in range(n_firms):
-            vec_j = normalized_matrix[:, j]
-            # For each column j, calculate overlap with all other columns
-            overlaps = np.sum(np.minimum(normalized_matrix, vec_j[:, np.newaxis]), axis=0)
-            result[:, j] = overlaps
+        for i in range(0, n_firms, block_size):
+            end_i = min(i + block_size, n_firms)
+            for j in range(0, n_firms, block_size):
+                end_j = min(j + block_size, n_firms)
+                
+                # Process block
+                block_i = normalized_matrix[:, i:end_i]
+                block_j = normalized_matrix[:, j:end_j]
+                
+                # Vectorized computation for this block
+                matrix_i = block_i[:, :, np.newaxis]
+                matrix_j = block_j[:, np.newaxis, :]
+                
+                overlaps = np.sum(np.minimum(matrix_i, matrix_j), axis=0)
+                result[i:end_i, j:end_j] = overlaps
         
         return result
     

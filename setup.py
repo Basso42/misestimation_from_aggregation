@@ -38,6 +38,7 @@ setup(
         "matplotlib>=3.4.0",
         "seaborn>=0.11.0",
         "jupyter>=1.0.0",
+        "numba>=0.56.0",
     ],
     extras_require={
         "dev": [
