@@ -16,11 +16,13 @@ from .network_aggregation import NetworkAggregator
 from .similarity_measures import SimilarityCalculator
 from .shock_sampling import ShockSampler
 from .utils import validate_network, validate_sectors
+from . import performance
 
 __all__ = [
     "NetworkAggregator",
     "SimilarityCalculator", 
     "ShockSampler",
     "validate_network",
-    "validate_sectors"
+    "validate_sectors",
+    "performance"
 ]

@@ -122,8 +122,26 @@ def check_sparsity(matrix: np.ndarray, threshold: float = 0.1) -> bool:
     if matrix.size == 0:
         return True
     
-    non_zero_fraction = np.count_nonzero(matrix) / matrix.size
-    return non_zero_fraction < threshold
+    # Handle sparse matrices
+    try:
+        from scipy import sparse
+        if sparse.issparse(matrix):
+            non_zero_fraction = matrix.nnz / matrix.size
+            return non_zero_fraction < threshold
+    except ImportError:
+        pass
+    
+    # Handle dense arrays
+    if isinstance(matrix, np.ndarray):
+        non_zero_fraction = np.count_nonzero(matrix) / matrix.size
+        return non_zero_fraction < threshold
+    
+    # Fallback for other matrix types
+    try:
+        non_zero_fraction = np.count_nonzero(matrix) / matrix.size
+        return non_zero_fraction < threshold
+    except:
+        return False
 
 
 def safe_divide(numerator: np.ndarray, denominator: np.ndarray, 
@@ -156,7 +174,7 @@ def safe_divide(numerator: np.ndarray, denominator: np.ndarray,
 def create_sparse_matrix(rows: np.ndarray, cols: np.ndarray, 
                         data: np.ndarray, shape: Tuple[int, int]) -> np.ndarray:
     """
-    Create dense matrix from sparse representation.
+    Create dense matrix from sparse representation using optimized indexing.
     
     Parameters
     ----------
@@ -174,6 +192,98 @@ def create_sparse_matrix(rows: np.ndarray, cols: np.ndarray,
     np.ndarray
         Dense matrix
     """
-    matrix = np.zeros(shape)
-    matrix[rows, cols] = data
-    return matrix
+    # Use optimized sparse matrix creation if available
+    try:
+        from scipy import sparse
+        sparse_matrix = sparse.coo_matrix((data, (rows, cols)), shape=shape)
+        return sparse_matrix.toarray()
+    except ImportError:
+        # Fallback to numpy
+        matrix = np.zeros(shape, dtype=data.dtype)
+        matrix[rows, cols] = data
+        return matrix
+
+
+def vectorized_sector_aggregation(values: np.ndarray, sectors: np.ndarray, 
+                                 operation: str = 'sum') -> np.ndarray:
+    """
+    Efficiently aggregate values by sector using vectorized operations.
+    
+    Parameters
+    ----------
+    values : np.ndarray
+        Values to aggregate (one per firm)
+    sectors : np.ndarray
+        Sector assignments for each firm
+    operation : str, default 'sum'
+        Aggregation operation ('sum', 'mean', 'count')
+        
+    Returns
+    -------
+    np.ndarray
+        Aggregated values by sector
+    """
+    unique_sectors = np.unique(sectors)
+    n_sectors = len(unique_sectors)
+    
+    if operation == 'sum':
+        # Use bincount for efficient summation
+        sector_indices = np.searchsorted(unique_sectors, sectors)
+        return np.bincount(sector_indices, weights=values, minlength=n_sectors)
+    
+    elif operation == 'mean':
+        # Calculate sum and count, then divide
+        sector_indices = np.searchsorted(unique_sectors, sectors)
+        sector_sums = np.bincount(sector_indices, weights=values, minlength=n_sectors)
+        sector_counts = np.bincount(sector_indices, minlength=n_sectors)
+        return safe_divide(sector_sums, sector_counts, fill_value=0.0)
+    
+    elif operation == 'count':
+        sector_indices = np.searchsorted(unique_sectors, sectors)
+        return np.bincount(sector_indices, minlength=n_sectors)
+    
+    else:
+        raise ValueError(f"Unknown operation: {operation}")
+
+
+def fast_matrix_multiply(A: np.ndarray, B: np.ndarray, 
+                        use_blas: bool = True) -> np.ndarray:
+    """
+    Fast matrix multiplication with automatic optimization selection.
+    
+    Parameters
+    ----------
+    A : np.ndarray
+        First matrix
+    B : np.ndarray
+        Second matrix
+    use_blas : bool, default True
+        Whether to use BLAS optimizations when available
+        
+    Returns
+    -------
+    np.ndarray
+        Matrix product A @ B
+    """
+    try:
+        from scipy import sparse
+        
+        # Handle sparse matrices
+        if sparse.issparse(A) or sparse.issparse(B):
+            result = A @ B
+            return result.toarray() if hasattr(result, 'toarray') else result
+        
+        # Check if sparse matrices would be beneficial for dense inputs
+        if isinstance(A, np.ndarray) and isinstance(B, np.ndarray):
+            if check_sparsity(A) or check_sparsity(B):
+                A_sparse = sparse.csr_matrix(A) if check_sparsity(A) else A
+                B_sparse = sparse.csr_matrix(B) if check_sparsity(B) else B
+                
+                result = A_sparse @ B_sparse
+                return result.toarray() if hasattr(result, 'toarray') else result
+                
+    except ImportError:
+        pass
+    
+    # Use standard numpy matrix multiplication (which uses BLAS when available)
+    return A @ B
