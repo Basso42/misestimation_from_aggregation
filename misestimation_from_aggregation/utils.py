@@ -5,6 +5,14 @@ Utility functions for network validation and data processing.
 import numpy as np
 from typing import Union, List, Tuple
 import warnings
+from .cpp_acceleration import HAS_CPP_EXTENSIONS
+
+# Import C++ functions if available
+if HAS_CPP_EXTENSIONS:
+    from .cpp_acceleration import (
+        fast_matrix_multiply_cpp,
+        check_sparsity_cpp
+    )
 
 
 def validate_network(network: np.ndarray, allow_negative: bool = False) -> np.ndarray:
@@ -119,6 +127,14 @@ def check_sparsity(matrix: np.ndarray, threshold: float = 0.1) -> bool:
     bool
         True if matrix is sparse (< threshold non-zero elements)
     """
+    # Use C++ implementation if available (fastest)
+    if HAS_CPP_EXTENSIONS:
+        try:
+            return check_sparsity_cpp(matrix, threshold)
+        except Exception as e:
+            warnings.warn(f"C++ sparsity check failed, falling back to Python: {e}", UserWarning)
+    
+    # Original Python implementation as fallback
     if matrix.size == 0:
         return True
     
@@ -265,6 +281,14 @@ def fast_matrix_multiply(A: np.ndarray, B: np.ndarray,
     np.ndarray
         Matrix product A @ B
     """
+    # Use C++ implementation if available (highest priority)
+    if HAS_CPP_EXTENSIONS:
+        try:
+            return fast_matrix_multiply_cpp(A, B, use_parallel=True)
+        except Exception as e:
+            warnings.warn(f"C++ matrix multiplication failed, falling back to Python: {e}", UserWarning)
+    
+    # Original Python implementation as fallback
     try:
         from scipy import sparse
         

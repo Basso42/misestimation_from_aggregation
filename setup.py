@@ -1,6 +1,33 @@
 """Setup script for misestimation_from_aggregation package."""
 
-from setuptools import setup, find_packages
+from setuptools import setup, find_packages, Extension
+from pybind11.setup_helpers import Pybind11Extension, build_ext
+from pybind11 import get_cmake_dir
+import pybind11
+import numpy
+
+# Define C++ extension modules
+cpp_extensions = [
+    Pybind11Extension(
+        "misestimation_from_aggregation._cpp_core",
+        [
+            "misestimation_from_aggregation/cpp/similarity_ops.cpp",
+            "misestimation_from_aggregation/cpp/matrix_ops.cpp", 
+            "misestimation_from_aggregation/cpp/network_ops.cpp",
+            "misestimation_from_aggregation/cpp/python_bindings.cpp",
+        ],
+        include_dirs=[
+            # Path to pybind11 headers
+            pybind11.get_include(),
+            # Path to numpy headers
+            numpy.get_include(),
+            # Local include directory
+            "misestimation_from_aggregation/cpp/include",
+        ],
+        language='c++',
+        cxx_std=17,
+    ),
+]
 
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
@@ -15,6 +42,8 @@ setup(
     long_description_content_type="text/markdown",
     url="https://github.com/Basso42/misestimation_from_aggregation",
     packages=find_packages(),
+    ext_modules=cpp_extensions,
+    cmdclass={"build_ext": build_ext},
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Science/Research",
@@ -39,6 +68,7 @@ setup(
         "seaborn>=0.11.0",
         "jupyter>=1.0.0",
         "numba>=0.56.0",
+        "pybind11>=2.6.0",
     ],
     extras_require={
         "dev": [

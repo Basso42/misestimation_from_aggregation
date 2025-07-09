@@ -8,6 +8,16 @@ from multiprocessing import Pool
 import warnings
 from .utils import safe_divide
 from .performance import batch_minimum_maximum, estimate_memory_usage, optimize_matrix_operations
+from .cpp_acceleration import HAS_CPP_EXTENSIONS
+
+# Import C++ functions if available
+if HAS_CPP_EXTENSIONS:
+    from .cpp_acceleration import (
+        pairwise_weighted_jaccard_cpp,
+        pairwise_overlap_relative_cpp,
+        pairwise_cosine_similarity_cpp,
+        temporal_weighted_jaccard_cpp
+    )
 
 try:
     from scipy import sparse
@@ -105,6 +115,14 @@ class SimilarityCalculator:
         np.ndarray
             Pairwise weighted Jaccard similarity matrix
         """
+        # Use C++ implementation if available
+        if HAS_CPP_EXTENSIONS:
+            try:
+                return pairwise_weighted_jaccard_cpp(matrix, use_parallel=True)
+            except Exception as e:
+                warnings.warn(f"C++ implementation failed, falling back to Python: {e}", UserWarning)
+        
+        # Original Python implementation as fallback
         n_firms = matrix.shape[1]
         
         # Check memory requirements for large matrices
@@ -216,6 +234,14 @@ class SimilarityCalculator:
         np.ndarray
             Pairwise relative overlap matrix
         """
+        # Use C++ implementation if available
+        if HAS_CPP_EXTENSIONS:
+            try:
+                return pairwise_overlap_relative_cpp(matrix, use_parallel=True)
+            except Exception as e:
+                warnings.warn(f"C++ implementation failed, falling back to Python: {e}", UserWarning)
+        
+        # Original Python implementation as fallback
         # Normalize columns by their sums
         column_sums = np.sum(matrix, axis=0)
         normalized_matrix = safe_divide(matrix, column_sums[np.newaxis, :], fill_value=0.0)
@@ -295,6 +321,14 @@ class SimilarityCalculator:
         np.ndarray
             Pairwise cosine similarity matrix
         """
+        # Use C++ implementation if available
+        if HAS_CPP_EXTENSIONS:
+            try:
+                return pairwise_cosine_similarity_cpp(matrix, use_parallel=True)
+            except Exception as e:
+                warnings.warn(f"C++ implementation failed, falling back to Python: {e}", UserWarning)
+        
+        # Original Python implementation as fallback
         # Calculate dot products
         dot_products = matrix.T @ matrix
         
@@ -437,6 +471,14 @@ class SimilarityCalculator:
         np.ndarray
             Temporal weighted Jaccard indices for each firm
         """
+        # Use C++ implementation if available
+        if HAS_CPP_EXTENSIONS:
+            try:
+                return temporal_weighted_jaccard_cpp(matrix_t, matrix_tm1, use_parallel=True)
+            except Exception as e:
+                warnings.warn(f"C++ implementation failed, falling back to Python: {e}", UserWarning)
+        
+        # Original Python implementation as fallback
         intersections = np.sum(np.minimum(matrix_t, matrix_tm1), axis=0)
         unions = np.sum(np.maximum(matrix_t, matrix_tm1), axis=0)
         
