@@ -4,8 +4,20 @@ Network aggregation functions for converting firm-level networks to sector-level
 
 import numpy as np
 from typing import Dict, Tuple, Optional, Union, List
+import warnings
 from .utils import validate_network, validate_sectors, get_sector_mapping, check_sparsity, fast_matrix_multiply
 from .performance import optimized_indicator_matrix, cached_unique_sectors
+from .cpp_acceleration import HAS_CPP_EXTENSIONS
+
+# Import C++ functions if available
+if HAS_CPP_EXTENSIONS:
+    from .cpp_acceleration import (
+        aggregate_to_sectors_cpp,
+        aggregate_suppliers_cpp,
+        aggregate_buyers_cpp,
+        optimized_indicator_matrix_cpp,
+        fast_matrix_multiply_cpp
+    )
 
 try:
     from scipy import sparse
@@ -55,6 +67,19 @@ class NetworkAggregator:
         else:
             unique_sectors = np.asarray(unique_sectors)
         
+        # Use C++ implementation if available  
+        if HAS_CPP_EXTENSIONS:
+            try:
+                # Convert to int32 for C++ compatibility
+                sectors_int = np.asarray(sectors, dtype=np.int32)
+                unique_sectors_int = np.asarray(unique_sectors, dtype=np.int32)
+                
+                counts, volumes = aggregate_suppliers_cpp(network, sectors_int, unique_sectors_int)
+                return {'counts': counts, 'volume': volumes}
+            except Exception as e:
+                warnings.warn(f"C++ implementation failed, falling back to Python: {e}", UserWarning)
+        
+        # Original Python implementation as fallback
         n_firms = network.shape[0]
         n_sectors = len(unique_sectors)
         
@@ -101,6 +126,19 @@ class NetworkAggregator:
         else:
             unique_sectors = np.asarray(unique_sectors)
         
+        # Use C++ implementation if available
+        if HAS_CPP_EXTENSIONS:
+            try:
+                # Convert to int32 for C++ compatibility
+                sectors_int = np.asarray(sectors, dtype=np.int32)
+                unique_sectors_int = np.asarray(unique_sectors, dtype=np.int32)
+                
+                counts, volumes = aggregate_buyers_cpp(network, sectors_int, unique_sectors_int)
+                return {'counts': counts, 'volume': volumes}
+            except Exception as e:
+                warnings.warn(f"C++ implementation failed, falling back to Python: {e}", UserWarning)
+        
+        # Original Python implementation as fallback
         n_firms = network.shape[0]
         n_sectors = len(unique_sectors)
         
@@ -135,6 +173,16 @@ class NetworkAggregator:
         network = validate_network(network)
         sectors = validate_sectors(sectors, network.shape[0])
         
+        # Use C++ implementation if available
+        if HAS_CPP_EXTENSIONS:
+            try:
+                # Convert sectors to int32 for C++ compatibility
+                sectors_int = np.asarray(sectors, dtype=np.int32)
+                return aggregate_to_sectors_cpp(network, sectors_int, use_parallel=True)
+            except Exception as e:
+                warnings.warn(f"C++ implementation failed, falling back to Python: {e}", UserWarning)
+        
+        # Original Python implementation as fallback
         consecutive_sectors, sector_to_index, index_to_sector = get_sector_mapping(sectors)
         n_sectors = len(sector_to_index)
         n_firms = network.shape[0]

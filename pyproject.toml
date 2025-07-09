@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2", "pybind11>=2.6.0", "numpy>=1.20.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -38,6 +38,7 @@ dependencies = [
     "seaborn>=0.11.0",
     "jupyter>=1.0.0",
     "numba>=0.56.0",
+    "pybind11>=2.6.0",
 ]
 dynamic = ["version"]
 
